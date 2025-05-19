@@ -12,6 +12,7 @@ public:
 
     void paintEvent(QPaintEvent *event) override;
 
+
     QSize sizeHint() const override;
 Q_SIGNALS:
     void sizeChanged(QSize);

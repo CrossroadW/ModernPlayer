@@ -103,6 +103,8 @@ void PlayerWidget::paintEvent(QPaintEvent *event) {
     painter.drawImage(dstRect, rgbImage);
 }
 
+
+
 QSize PlayerWidget::sizeHint() const {
     if (mImpl->g_width > 0 && mImpl->g_height > 0) {
         spdlog::info("use g_width:{} g_height:{}", mImpl->g_width,

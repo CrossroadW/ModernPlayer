@@ -341,7 +341,8 @@ void PlayerController::Play() {
 
 
 void PlayerController::Close() {
-    if (mState == PlayerState::Playing || mState == PlayerState::Paused) {
+    if (mState == PlayerState::Playing || mState == PlayerState::Paused ||
+        mState == PlayerState::Ready) {
         mState = PlayerState::Idle;
         if (mReadTask.joinable()) {
             mReadTask.request_stop();
@@ -390,7 +391,7 @@ void PlayerController::Close() {
         emit StateChanged(mState);
     } else {
         spdlog::warn(
-            PREFIX "PlayerController::Close player is not playing or paused");
+            PREFIX "PlayerController::Close player is not playing or paused or ready");
     }
 }
 

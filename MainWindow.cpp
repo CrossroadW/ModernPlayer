@@ -17,15 +17,8 @@
 #include <QFile>
 #include <QListView>
 #include <QStandardItemModel>
-
-namespace {
-struct MediaItem {
-    QString title;
-    QString filePath;
-    QPixmap thumbnail;
-    qint64 duration;
-};
-}
+#include <QStandardPaths>
+#include <QDateTime>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     this->resize({800, 600});
@@ -112,8 +105,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         // 工具栏按钮控制展开/收缩
         auto *toolBar = addToolBar("控制");
         QAction *toggleListAction = new QAction("隐藏列表", this);
+        QAction *takeScreenshotAction = new QAction("截图", this);
         toolBar->addAction(toggleListAction);
+        toolBar->addAction(takeScreenshotAction);
 
+        connect(takeScreenshotAction, &QAction::triggered, this, [=]() {
+            QString picturesDir = QStandardPaths::writableLocation(
+                QStandardPaths::PicturesLocation);
+
+            // 创建一个带时间戳的文件名
+            QString fileName = QDateTime::currentDateTime().toString(
+                "screenshot_yyyyMMdd_HHmmss.png");
+            QString filePath = picturesDir + "/" + fileName;
+
+            // 保存截图
+            if (mRender && mRender->grab().save(filePath)) {
+                spdlog::info("截图成功：{}", filePath.toStdString());
+            } else {
+                spdlog::error("截图失败");
+            }
+        });
         // 保存初始展开尺寸
         int savedListWidth = mListView->width(); // 用于恢复时使用
         connect(toggleListAction, &QAction::triggered, this, [=]() mutable {
@@ -202,6 +213,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     layout->addLayout(buttom);
     connect(closeBnt, &QPushButton::clicked, this, [this] {
         spdlog::info("close");
+        if (!mController || mController->state() == PlayerState::Idle) {
+            return;
+        }
         mController->Close();
         mProgressTimer->stop();
         mProgressBar->setValue(0);
