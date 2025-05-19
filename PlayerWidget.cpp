@@ -3,6 +3,8 @@
 #include "PlayerController.h"
 #include <QPainter>
 #include "libyuv.h"
+#include <QStyleOption>
+#include <QTimer>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -42,10 +44,13 @@ struct PlayerWidget::Impl {
 };
 
 PlayerWidget::PlayerWidget(QWidget *parent): QWidget(parent),
-                                             mImpl(new Impl{}) {}
+                                             mImpl(new Impl{}) {
+    setStyleSheet("QWidget{border: 1px solid black; background-color: black;}");
+}
 
 
 void PlayerWidget::onFrameChanged(VideoFrame frame) {
+
     const uint8_t *src_y = frame->data[0];
     const uint8_t *src_u = frame->data[1];
     const uint8_t *src_v = frame->data[2];
@@ -74,11 +79,13 @@ void PlayerWidget::onFrameChanged(VideoFrame frame) {
 
 
 void PlayerWidget::paintEvent(QPaintEvent *event) {
+    QStyleOption opt;
+    opt.init(this);
+    QPainter painter(this);
+    style()->drawPrimitive(QStyle::PE_Widget, &opt, &painter, this);
     if (mImpl->g_rgbaData.empty()) {
         return;
     }
-
-    QPainter painter(this);
 
     const QRect viewRect = rect();
 
@@ -94,4 +101,15 @@ void PlayerWidget::paintEvent(QPaintEvent *event) {
                  Qt::FastTransformation);
 
     painter.drawImage(dstRect, rgbImage);
+}
+
+QSize PlayerWidget::sizeHint() const {
+    if (mImpl->g_width > 0 && mImpl->g_height > 0) {
+        spdlog::info("use g_width:{} g_height:{}", mImpl->g_width,
+                     mImpl->g_height);
+        return {mImpl->g_width, mImpl->g_height};
+    }
+    // 默认 fallback 尺寸
+    spdlog::info("use default size");
+    return {600, 400};
 }

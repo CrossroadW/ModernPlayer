@@ -4,7 +4,8 @@
 #include <vector>
 #include <QWidget>
 #include <QStyle>
-using VideoFrame = struct AVFrame *;
+struct AVFrame;
+using VideoFrame = AVFrame *;
 using AudioFrame = std::vector<const char *>;
 
 namespace g {

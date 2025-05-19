@@ -12,6 +12,9 @@ public:
 
     void paintEvent(QPaintEvent *event) override;
 
+    QSize sizeHint() const override;
+Q_SIGNALS:
+    void sizeChanged(QSize);
 public Q_SLOTS:
     void onFrameChanged(VideoFrame);
 
@@ -19,3 +22,5 @@ private:
     struct Impl;
     Impl *mImpl{};
 };
+
+
