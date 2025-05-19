@@ -1,0 +1,66 @@
+/* ===== 基础按钮规范 ===== */
+QPushButton {
+    font-family: "Segoe UI", Arial;
+    font-size: 13px;
+    min-width: 30px;
+    min-height: 30px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+    padding: 5px 10px;
+    background-position: center;
+    background-repeat: no-repeat;
+    transition: all 100ms ease-out;
+}
+
+/* ===== 播放按钮 ===== */
+QPushButton#playBtn {
+    background-image: url(:/res/material-symbols--timer-pause-outline-rounded.svg);
+    padding-left: 30px;  /* 图标文字间距 */
+}
+
+QPushButton#playBtn[isPlaying="true"] {
+    background-image: url(:/res/material-symbols--timer-play-outline.svg);
+}
+
+/* ===== 前进/后退按钮 ===== */
+QPushButton#beforeBtn,
+QPushButton#afterBtn {
+    color: black;
+    background-image: none; /* 无图标 */
+}
+
+QPushButton#beforeBtn:hover,
+QPushButton#afterBtn:hover {
+}
+
+/* ===== 关闭按钮 ===== */
+QPushButton#closeBtn {
+    background-image: url(:/res/ep--circle-close.svg);
+    color: white;
+    font-weight: 500;
+}
+
+
+/* ===== 通用交互状态 ===== */
+/* 悬停状态 */
+QPushButton:hover {
+    border-color: #5aa0f2;
+}
+
+/* 按下效果 (统一3D凹陷风格) */
+QPushButton:pressed {
+    border-top-color: rgba(0, 0, 0, 0.15);
+    border-left-color: rgba(0, 0, 0, 0.15);
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+    border-right-color: rgba(255, 255, 255, 0.1);
+    background-color:
+        /* 动态计算加深色 */
+        qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 rgba(0, 0, 0, 0.1),
+            stop:1 rgba(0, 0, 0, 0.2));
+}
+
+/* 禁用状态 */
+QPushButton:disabled {
+    opacity: 0.5;
+}

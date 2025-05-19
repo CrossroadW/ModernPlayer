@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/">
+        <file>res/material-symbols--timer-pause-outline-rounded.svg</file>
+        <file>res/material-symbols--timer-play-outline.svg</file>
+        <file>res/qss.qss</file>
+        <file>res/ep--circle-close.svg</file>
+    </qresource>
+</RCC>

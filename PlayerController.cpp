@@ -157,7 +157,7 @@ void startVideoDecode2(std::stop_token token, PlayerController *controller) {
                                                 videoStream]->
                                             time_base)
                                         * pts * 1000;
-            using namespace std::chrono_literals;
+
             using namespace std::chrono;
 
             milliseconds deadline = g_start_time + milliseconds(
@@ -400,7 +400,6 @@ void PlayerController::SeekTo(int64_t seek_pos) {
         g_last_pause_point = std::chrono::system_clock::now();
         g_is_paused = true;
         g_is_seeking = true;
-        using namespace std::literals;
         spdlog::info(PREFIX "seek to {}", seek_pos);
         g_seek_pos_ms = seek_pos;
         emit StateChanged(mState);

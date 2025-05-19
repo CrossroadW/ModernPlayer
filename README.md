@@ -11,3 +11,6 @@
 # required 
 Qt5  
 FFmpeg 较新版本 
+
+# 效果
+![view](img.png)

@@ -14,13 +14,15 @@
 #include <spdlog/spdlog.h>
 #include <QTimer>
 #include <QInputDialog>
+#include <QFile>
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     this->resize({700, 600});
     this->setMenuBar(new QMenuBar{});
     mProgressTimer = new QTimer(this);
 
-    auto file = menuBar()->addMenu("File");
-    auto onOpen = file->addAction("open file");
+    auto file = menuBar()->addMenu("文件");
+    auto onOpen = file->addAction("打开文件");
     connect(onOpen, &QAction::triggered, this, [this] {
         spdlog::info("open file");
         auto filePath = QFileDialog::getOpenFileName(this, "Open File",
@@ -36,29 +38,35 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             spdlog::error("open file error:{}", e.what());
         }
     });
-    auto onUrl = file->addAction("open url");
+    auto onUrl = file->addAction("通过URL打开");
     connect(onUrl, &QAction::triggered, [this] {
         bool ok;
-   QString url = QInputDialog::getText(this,
-                                      "Open URL",
-                                      "Enter video URL:",
-                                      QLineEdit::Normal,
-                                      "http://",
-                                      &ok);
+        QString url = QInputDialog::getText(this,
+                                            "Open URL",
+                                            "Enter video URL:",
+                                            QLineEdit::Normal,
+                                            "http://",
+                                            &ok);
 
-   if (ok && !url.isEmpty()) {
-       try {
-           if (mController->state() != PlayerState::Idle) {
-               delete mController;
-               mController = new PlayerController{mRender};
-           }
-           mController->Open(url.toStdString());
-       } catch (const std::exception &e) {
-           spdlog::error("open url error: {}", e.what());
-       }
-   }
+        if (ok && !url.isEmpty()) {
+            try {
+                if (mController->state() != PlayerState::Idle) {
+                    delete mController;
+                    mController = new PlayerController{mRender};
+                }
+                mController->Open(url.toStdString());
+            } catch (const std::exception &e) {
+                spdlog::error("open url error: {}", e.what());
+            }
+        }
     });
     auto widget = new QWidget{};
+    QFile qss(":/res/qss.qss");
+    if (!qss.open(QFile::ReadOnly)) {
+        spdlog::error("open qss.qss error");
+        throw std::runtime_error("open qss.qss error");
+    };
+    widget->setStyleSheet(qss.readAll());
     setCentralWidget(widget);
     auto layout = new QVBoxLayout(widget);
     mRender = new PlayerWidget{};
@@ -67,10 +75,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     auto buttom = new QHBoxLayout{};
 
-    auto playBtn = new QPushButton{"播放"};
+    auto playBtn = new QPushButton{};
+    playBtn->setObjectName("playBtn");
+    playBtn->setProperty("isPlaying", false); // 初始状态为暂停
+    g::updateStyle(playBtn);
     auto before = new QPushButton{"后退"};
+    before->setObjectName("beforeBtn");
     auto after = new QPushButton{"前进"};
-    auto closeBnt = new QPushButton{"关闭"};
+    after->setObjectName("afterBtn");
+    auto closeBnt = new QPushButton{};
+    closeBnt->setObjectName("closeBtn");
     mProgressBar = new QSlider{Qt::Horizontal};
     mProgressBar->setRange(0, 1000);
     mProgressBar->setValue(0);
@@ -78,8 +92,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     buttom->addWidget(playBtn);
     buttom->addWidget(after);
     buttom->addWidget(mProgressBar);
+    buttom->addWidget(closeBnt);
     layout->addLayout(buttom);
-    layout->addWidget(closeBnt);
     connect(closeBnt, &QPushButton::clicked, this, [this] {
         spdlog::info("close");
         mController->Close();
@@ -139,7 +153,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(mController, &PlayerController::StateChanged, this, [this,playBtn] {
         spdlog::info("OnStateChanged");
         if (mController->state() == PlayerState::Playing) {
-            playBtn->setText("暂停");
+            playBtn->setProperty("isPlaying", true);
+            g::updateStyle(playBtn);
             if (!mProgressTimer->isActive()) {
                 mProgressTimer->start();
                 auto [curr, total] = mController->CurrentPosition();
@@ -163,7 +178,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             }
         } else if (mController->state() == PlayerState::Paused || mController->
                    state() == PlayerState::Idle) {
-            playBtn->setText("播放");
+            playBtn->setProperty("isPlaying", false);
+            g::updateStyle(playBtn);
             if (mProgressTimer->isActive()) {
                 mProgressTimer->stop();
             }
@@ -190,14 +206,21 @@ MainWindow::~MainWindow() {
 void MainWindow::OnSliderValueChanged(int value) {}
 
 void MainWindow::OnSliderPressed() const {
-    mProgressTimer->stop();
+    if (mController->state() == PlayerState::Idle) {
+        spdlog::warn("OnSliderPressed PlayerState::Idle");
 
-    spdlog::warn("OnSliderPressed");
+        return;
+    }
+    mProgressTimer->stop();
 }
 
 void MainWindow::OnSliderValueReleased() const {
+    if (mController->state() == PlayerState::Idle) {
+        spdlog::warn("OnSliderValueReleased PlayerState::Idle");
+        mProgressBar->setValue(0);
+        return;
+    }
     int value = mProgressBar->value();
     mController->SeekTo(value * 1.0 / 1000 * mTotalPos);
-    spdlog::warn("OnSliderValueReleased");
     mProgressTimer->start();
 }

@@ -5,7 +5,7 @@ project(ModernPlayer)
 
 file(GLOB SOURCES *.cpp *.h)
 
-add_executable(${CMAKE_PROJECT_NAME} ${SOURCES})
+add_executable(${CMAKE_PROJECT_NAME} ${SOURCES} qrc.qrc)
 
 find_package(spdlog CONFIG REQUIRED)
 find_package(Qt5  CONFIG COMPONENTS REQUIRED Core Gui Widgets Network Multimedia)
@@ -28,4 +28,5 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_20)
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
         AUTOMOC ON
+        AUTORCC ON
 )
