@@ -8,6 +8,7 @@ class PlayerWidget;
 class MainWindow final: public QMainWindow {
     Q_OBJECT
 
+
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
@@ -24,4 +25,5 @@ private:
     int64_t mCurrentPos;
     int64_t mTotalPos;
     struct QSlider* mProgressBar;
+    struct QListView* mListView;
 };

@@ -42,7 +42,7 @@ void doSeek(int64_t seek_pos_ms, int64_t curr_playing_ms) {
     int seek_flags = AVSEEK_FLAG_FRAME;
     if (av_seek_frame(g_format_context, audioStream, target_pts, seek_flags) <
         0) {
-        throw std::runtime_error("Seek failed");
+        spdlog::error(PREFIX ".doSeek seek failed");
     }
 }
 

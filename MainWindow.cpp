@@ -1,5 +1,5 @@
 #include "MainWindow.h"
-#include <QAction>
+#include <QSplitter>
 #include <QDebug>
 #include <QMenuBar>
 #include "PlayerWidget.h"
@@ -9,15 +9,26 @@
 #include <QFileDialog>
 #include <QPushButton>
 #include <QHBoxLayout>
-#include <QSlider>
+#include <QToolBar>
 #include <QStatusBar>
 #include <spdlog/spdlog.h>
 #include <QTimer>
 #include <QInputDialog>
 #include <QFile>
+#include <QListView>
+#include <QStandardItemModel>
+
+namespace {
+struct MediaItem {
+    QString title;
+    QString filePath;
+    QPixmap thumbnail;
+    qint64 duration;
+};
+}
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
-    this->resize({700, 600});
+    this->resize({800, 600});
     this->setMenuBar(new QMenuBar{});
     mProgressTimer = new QTimer(this);
 
@@ -60,6 +71,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             }
         }
     });
+
     auto widget = new QWidget{};
     QFile qss(":/res/qss.qss");
     if (!qss.open(QFile::ReadOnly)) {
@@ -70,7 +82,101 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setCentralWidget(widget);
     auto layout = new QVBoxLayout(widget);
     mRender = new PlayerWidget{};
-    layout->addWidget(mRender);
+
+    {
+        // 创建 QListView 和 Model
+        mListView = new QListView{};
+        auto playListModel = new QStandardItemModel{mListView};
+        playListModel->setItemRoleNames({}); // 可选，清空自定义角色名
+        mListView->setEditTriggers(QAbstractItemView::NoEditTriggers); // 禁止双击编辑
+        mListView->setDragEnabled(false); // 禁止拖动
+        mListView->setDragDropMode(QAbstractItemView::NoDragDrop); // 不支持拖拽模式
+        mListView->setDefaultDropAction(Qt::IgnoreAction); // 忽略拖拽操作
+        mListView->setModel(playListModel);
+
+        // 使用 QSplitter 实现可拖动布局
+        auto *splitter = new QSplitter(Qt::Horizontal);
+        splitter->addWidget(mListView);
+        splitter->addWidget(mRender);
+
+        // 设置默认比例
+        splitter->setStretchFactor(0, 2);
+        splitter->setStretchFactor(1, 5);
+        splitter->setCollapsible(1, false); // 禁止折叠右侧
+
+        // 设置最小宽度
+        mListView->setMinimumWidth(100);
+        mRender->setMinimumWidth(450);
+        layout->addWidget(splitter);
+
+        // 工具栏按钮控制展开/收缩
+        auto *toolBar = addToolBar("控制");
+        QAction *toggleListAction = new QAction("隐藏列表", this);
+        toolBar->addAction(toggleListAction);
+
+        // 保存初始展开尺寸
+        int savedListWidth = mListView->width(); // 用于恢复时使用
+        connect(toggleListAction, &QAction::triggered, this, [=]() mutable {
+            QList<int> sizes = splitter->sizes();
+            if (sizes[0] > 5) {
+                // 当前是展开状态 -> 折叠（设置为 0 宽度）
+                savedListWidth = sizes[0]; // 保存当前宽度
+                splitter->setSizes({0, sizes[1] + sizes[0]});
+                toggleListAction->setText("展开列表");
+            } else {
+                // 当前是折叠状态 -> 展开（恢复原来宽度）
+                splitter->setSizes({savedListWidth, sizes[1] - savedListWidth});
+                toggleListAction->setText("隐藏列表");
+            }
+        });
+
+        auto *openFolderAction = new QAction("打开文件夹", this);
+        toolBar->addAction(openFolderAction);
+        connect(openFolderAction, &QAction::triggered, this, [=]() {
+            QString dirPath =
+                QFileDialog::getExistingDirectory(this, "选择视频文件夹");
+            if (dirPath.isEmpty())
+                return;
+
+            QDir dir(dirPath);
+            QStringList videoFilters = {"*.mp4", "*.mkv", "*.avi", "*.mov",
+                                        "*.flv"};
+            QFileInfoList fileList = dir.entryInfoList(
+                videoFilters, QDir::Files);
+
+            auto model = qobject_cast<QStandardItemModel *>(mListView->model());
+            if (!model)
+                return;
+
+            model->clear(); // 清空旧列表
+
+            for (const QFileInfo &fileInfo: fileList) {
+                QStandardItem *item = new QStandardItem(fileInfo.fileName());
+                item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+                item->setData(fileInfo.absoluteFilePath(), Qt::UserRole);
+                // 储存完整路径
+                model->appendRow(item);
+            }
+        });
+
+        connect(mListView, &QListView::clicked, this,
+                [=](const QModelIndex &index) {
+                    auto model = qobject_cast<QStandardItemModel *>(
+                        mListView->model());
+                    if (!model || !mController)
+                        return;
+                    if (mController->state() != PlayerState::Idle) {
+                        delete mController;
+                        mController = new PlayerController{mRender};
+                    }
+                    QString filePath = model->itemFromIndex(index)->data(
+                        Qt::UserRole).toString();
+                    spdlog::info("open file:{}", filePath.toStdString());
+                    mController->Open(filePath.toStdString());
+                    mController->Play();
+                });
+    }
+
     mController = new PlayerController{mRender};
 
     auto buttom = new QHBoxLayout{};
