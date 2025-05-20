@@ -112,6 +112,6 @@ QSize PlayerWidget::sizeHint() const {
         return {mImpl->g_width, mImpl->g_height};
     }
     // 默认 fallback 尺寸
-    spdlog::info("use default size");
+    // spdlog::info("use default size");
     return {600, 400};
 }

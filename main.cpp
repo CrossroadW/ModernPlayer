@@ -8,7 +8,7 @@ int main(int argc, char *argv[]) {
     // a.setStyleSheet(R"(*{border: 1px solid green;})");
     MainWindow w{};
     w.show();
-    // spdlog::set_level(spdlog::level::warn);
+    spdlog::set_level(spdlog::level::warn);
 
 
     return QApplication::exec();

@@ -64,3 +64,15 @@ QPushButton:pressed {
 QPushButton:disabled {
     opacity: 0.5;
 }
+
+QPushButton#speedBtn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: #333;
+    font-weight: bold;
+}
+
+QPushButton#speedBtn:checked {
+    background-color: #c0c0c0;  /* 选中时变灰 */
+    color: black;
+}

@@ -215,7 +215,6 @@ public:
     }
 
 
-
     class AudioPlayer {
     public:
         AudioPlayer() : audioOutput(nullptr), outputDevice(nullptr) {}
@@ -445,9 +444,13 @@ public:
 
 
     static HasError decodeAudio(SwrResample *&swrResample, AVFrame *frame,
-                                AVCodecContext *audioCodecCtx
+                                AVCodecContext *audioCodecCtx, int speed = 1.0
         ) {
-        if (!swrResample) {
+        static int oldSpeed = -1;
+        if (!swrResample || oldSpeed != speed) {
+            if (swrResample) {
+                delete swrResample;
+            }
             swrResample = new SwrResample{};
 
             int src_ch_layout = audioCodecCtx->channel_layout;
@@ -455,13 +458,15 @@ public:
             AVSampleFormat src_sample_fmt = audioCodecCtx->sample_fmt;
 
             int dst_ch_layout = AV_CH_LAYOUT_STEREO;
-            int dst_rate = 44100;
+            int dst_rate = static_cast<int>(44100 * speed);
+            // int dst_rate = 44100;
             AVSampleFormat dst_sample_fmt = AV_SAMPLE_FMT_S16;
 
             int src_nb_samples = frame->nb_samples;
 
             swrResample->Init(src_ch_layout, dst_ch_layout, src_rate, dst_rate,
                               src_sample_fmt, dst_sample_fmt, src_nb_samples);
+            oldSpeed = speed;
         }
 
         swrResample->WriteInput(frame);

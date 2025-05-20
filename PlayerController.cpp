@@ -15,7 +15,7 @@ AVCodecContext *videoCodecContext;
 AVCodecContext *audioCodecContext;
 int videoStream;
 int audioStream;
-std::chrono::milliseconds g_start_time;
+std::chrono::time_point<std::chrono::system_clock> g_start_time;
 std::chrono::milliseconds g_total_video_time;
 
 std::mutex g_mtx_pause;
@@ -25,6 +25,7 @@ std::atomic<std::chrono::milliseconds> g_pause_time;
 std::atomic_bool g_is_paused = false;
 std::atomic_bool g_is_seeking = false;
 std::atomic_int g_seek_pos_ms = 0;
+std::atomic_bool g_is_speeding = false;
 
 boost::lockfree::spsc_queue<AVPacket *, boost::lockfree::capacity<128>>
 g_buffer_video;
@@ -32,10 +33,11 @@ boost::lockfree::spsc_queue<AVPacket *, boost::lockfree::capacity<1024>>
 g_buffer_audio;
 FFmpeg::SwrResample *g_swr{};
 AVRational g_audio_pts_base;
-std::chrono::time_point<std::chrono::system_clock> g_last_pause_point;
+std::atomic<std::chrono::time_point<std::chrono::system_clock>>
+g_last_pause_point;
 
 
-void doSeek(int64_t seek_pos_ms, int64_t curr_playing_ms) {
+void doSeek(int64_t seek_pos_ms) {
     AVStream *audio_stream = g_format_context->streams[audioStream];
     double time_base = av_q2d(audio_stream->time_base) * 1000;
     int64_t target_pts = seek_pos_ms / time_base;
@@ -70,7 +72,7 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
         }
         bool isVideo = packet->stream_index == videoStream;
         bool isAudio = packet->stream_index == audioStream;
-        spdlog::info("push packet");
+        // spdlog::info("push packet");
 
         while (true) {
             if (token.stop_requested()) {
@@ -82,34 +84,38 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
                 spdlog::info("trigger seeking");
                 g_buffer_video.consume_all([](auto) {});
                 g_buffer_audio.consume_all([](auto) {});
-                assert(g_buffer_video.empty());
-                assert(g_buffer_audio.empty());
+
                 using namespace std::chrono;
+
                 int64_t current_ms = duration_cast<milliseconds>(
-                    (system_clock::now() - g_pause_time.load() - g_start_time).
-                    time_since_epoch()
+                    (system_clock::now() - g_pause_time.load() - g_start_time)
+
                     ).count();
 
-                doSeek(g_seek_pos_ms, current_ms);
+                doSeek(g_seek_pos_ms);
 
                 auto now = system_clock::now();
-                auto delta = std::chrono::duration_cast<
-                    std::chrono::milliseconds>(
-                    now - g_last_pause_point);
+
                 spdlog::info("seekoffset :{}", g_seek_pos_ms - current_ms);
-                g_pause_time = -std::chrono::milliseconds(
-                                   g_seek_pos_ms - current_ms) + g_pause_time.
-                               load();
-                std::chrono::milliseconds current = g_pause_time.load();
+                {
+                    milliseconds expected = g_pause_time.load();
+                    milliseconds desired;
+                    do {
+                        desired = expected + milliseconds(
+                                      current_ms - g_seek_pos_ms.load());
+                    } while (!g_pause_time.compare_exchange_weak(
+                        expected, desired));
+                }
+                auto delta = std::chrono::duration_cast<milliseconds>(
+                    now - g_last_pause_point.load());
+                milliseconds current = g_pause_time.load();
                 while (!g_pause_time.
                     compare_exchange_weak(current, current + delta)) {}
                 g_is_paused = false;
                 g_is_seeking = false;
                 g_cv_pause.notify_all();
+                spdlog::warn("seeking success");
                 break;
-            }
-            if (isAudio) {
-                spdlog::warn("audio push");
             }
             if (isVideo && !g_buffer_video.push(packet)) {
                 std::this_thread::sleep_for(std::chrono::microseconds(3));
@@ -124,6 +130,34 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
     }
 }
 
+uint64_t calDuration() {
+    static const AVFormatContext *lastFormatContext = nullptr;
+    static int lastVideoStream = -1;
+    static double cachedFrameIntervalMs = 0.0;
+
+    if (g_format_context == nullptr || videoStream < 0) {
+        return 0;
+    }
+
+    // 如果格式或视频流编号变化，重新计算
+    if (g_format_context != lastFormatContext || videoStream !=
+        lastVideoStream) {
+        AVStream *stream = g_format_context->streams[videoStream];
+        AVRational avgRate = stream->avg_frame_rate;
+
+        if (avgRate.num != 0 && avgRate.den != 0) {
+            cachedFrameIntervalMs = av_q2d(av_inv_q(avgRate)) * 1000.0;
+        } else {
+            cachedFrameIntervalMs = 0; // 无效帧率
+        }
+
+        // 更新缓存状态
+        lastFormatContext = g_format_context;
+        lastVideoStream = videoStream;
+    }
+
+    return cachedFrameIntervalMs;
+}
 
 void startVideoDecode2(std::stop_token token, PlayerController *controller) {
     while (!token.stop_requested()) {
@@ -145,12 +179,13 @@ void startVideoDecode2(std::stop_token token, PlayerController *controller) {
             spdlog::error(PREFIX "sendPacket2 error");
             continue;
         }
+
         while (!token.stop_requested() && !frames.empty() && !g_is_seeking.
                load()) {
             AVFrame *frame = frames.back();
             frames.pop_back();
 
-            uint64_t pts = packet->pts;
+            uint64_t pts = frame->pts;
 
             uint64_t currentPosMillis = av_q2d(
                                             g_format_context->streams[
@@ -159,19 +194,27 @@ void startVideoDecode2(std::stop_token token, PlayerController *controller) {
                                         * pts * 1000;
 
             using namespace std::chrono;
-
-            milliseconds deadline = g_start_time + milliseconds(
-                                        currentPosMillis);
-
-            while (!g_is_seeking && (duration_cast<milliseconds>(
-                       (system_clock::now() - g_pause_time.load()).
-                       time_since_epoch()))
+            // if (g_is_speeding.load()) {
+            //     auto duration = milliseconds(calDuration());
+            //     auto old_val = g_pause_time.load();
+            //     while (!g_pause_time.compare_exchange_weak(
+            //         old_val, old_val - duration)) {}
+            // }
+            auto deadline = g_start_time + milliseconds(
+                                currentPosMillis);
+            spdlog::warn("begin waiting && waiting");
+            while (!g_is_seeking && (
+                       system_clock::now() - g_pause_time.
+                       load())
                    <
                    deadline && !token.stop_requested()) {
-                std::this_thread::sleep_for(10us); // 精细等待
+                // spdlog::warn(PREFIX "video wait");
+
+                std::this_thread::sleep_for(1ms);
             }
+            spdlog::warn("end waiting && invokeMethod ");
             QMetaObject::invokeMethod(controller, "VideoFrameReady",
-                                      Qt::QueuedConnection,
+                                      Qt::DirectConnection,
                                       Q_ARG(VideoFrame, frame));
             {
                 std::unique_lock<std::mutex> lock(g_mtx_pause);
@@ -183,12 +226,10 @@ void startVideoDecode2(std::stop_token token, PlayerController *controller) {
             }
             if (g_is_seeking) {
                 spdlog::info("video break");
-                av_frame_free(&frame);
                 break;
             }
             if (token.stop_requested()) {
                 spdlog::info(PREFIX "video break return");
-                av_frame_free(&frame);
                 return;
             }
         }
@@ -219,25 +260,32 @@ void startAudioDecode(std::stop_token token, PlayerController *controller) {
             AVFrame *frame = frames.back();
             frames.pop_back();
 
-            uint64_t pts = packet->pts;
+            uint64_t pts = frame->pts;
 
             uint64_t currentPosMillis = av_q2d(
                                             g_format_context->streams[
                                                 audioStream]->
                                             time_base)
                                         * pts * 1000;
-            using namespace std::chrono_literals;
+
             using namespace std::chrono;
 
-            milliseconds deadline = g_start_time + milliseconds(
-                                        currentPosMillis);
+            auto deadline = g_start_time + milliseconds(
+                                currentPosMillis);
 
-            while (!g_is_seeking && (duration_cast<milliseconds>(
-                       (system_clock::now() - g_pause_time.load()).
-                       time_since_epoch()))
+            while (!g_is_seeking &&
+                   (system_clock::now() - g_pause_time.load())
                    <
                    deadline && !token.stop_requested()) {
-                std::this_thread::sleep_for(10us); // 精细等待
+                std::this_thread::sleep_for(1ms); // 精细等待
+            }
+
+            if (FFmpeg::decodeAudio(g_swr, frame, audioCodecContext).
+                hasErr()) {
+                spdlog::error("decodeAudio error");
+
+                av_frame_free(&frame);
+                continue;
             }
             {
                 std::unique_lock<std::mutex> lock(g_mtx_pause);
@@ -246,16 +294,11 @@ void startAudioDecode(std::stop_token token, PlayerController *controller) {
                     g_cv_pause.wait(lock);
                 }
             }
+
             if (g_is_seeking) {
                 spdlog::info("audio break");
-                break;
-            }
-            if (FFmpeg::decodeAudio(g_swr, frame, audioCodecContext).
-                hasErr()) {
-                spdlog::error("decodeAudio error");
-
                 av_frame_free(&frame);
-                continue;
+                break;
             }
             av_frame_free(&frame);
         }
@@ -314,9 +357,8 @@ void PlayerController::Play() {
         mState = PlayerState::Playing;
         spdlog::info(PREFIX "start decode thread");
 
-        auto now = std::chrono::system_clock::now();
         auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - g_last_pause_point);
+            std::chrono::system_clock::now() - g_last_pause_point.load());
 
         std::chrono::milliseconds current = g_pause_time.load();
         while (!g_pause_time.compare_exchange_weak(current, current + delta)) {}
@@ -329,8 +371,7 @@ void PlayerController::Play() {
         mState = PlayerState::Playing;
         spdlog::info("start decode thread");
 
-        g_start_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch());
+        g_start_time = std::chrono::system_clock::now();
         mReadTask = std::jthread(startReadPacket, this);
         mVideoTask = std::jthread(startVideoDecode2, this);
         mAudioTask = std::jthread(startAudioDecode, this);
@@ -385,25 +426,42 @@ void PlayerController::Close() {
         g_is_paused = false;
         g_is_seeking = false;
         g_seek_pos_ms = 0;
-        g_start_time = 0ms;
+        g_start_time = std::chrono::time_point<std::chrono::system_clock>();
         g_last_pause_point = std::chrono::system_clock::now();
 
         emit StateChanged(mState);
     } else {
         spdlog::warn(
-            PREFIX "PlayerController::Close player is not playing or paused or ready");
+            PREFIX
+            "PlayerController::Close player is not playing or paused or ready");
     }
+}
+
+void PlayerController::Speed(bool checked) const {
+    spdlog::warn(PREFIX "speed not implemented");
+    // if (mState != PlayerState::Playing) {
+    //     spdlog::warn(PREFIX "player is not playing");
+    //     return;
+    // }
+    // if (checked) {
+    //     spdlog::info(PREFIX "speed up");
+    //     g_is_speeding = true;
+    //     g_cv_pause.notify_all();
+    // } else {
+    //     g_is_speeding = false;
+    //     g_cv_pause.notify_all();
+    // }
 }
 
 void PlayerController::SeekTo(int64_t seek_pos) {
     if (mState == PlayerState::Playing) {
         mState = PlayerState::Seeking;
         g_last_pause_point = std::chrono::system_clock::now();
-        g_is_paused = true;
+        g_is_paused = false;
+        g_cv_pause.notify_all();
         g_is_seeking = true;
         spdlog::info(PREFIX "seek to {}", seek_pos);
         g_seek_pos_ms = seek_pos;
-        emit StateChanged(mState);
         mState = PlayerState::Playing;
         emit StateChanged(mState);
         return;
@@ -411,9 +469,17 @@ void PlayerController::SeekTo(int64_t seek_pos) {
 
     if (mState == PlayerState::Paused) {
         mState = PlayerState::Seeking;
+        g_last_pause_point = std::chrono::system_clock::now();
+        g_is_paused = false;
+        g_cv_pause.notify_all();
+        g_is_seeking = true;
+        spdlog::info(PREFIX "seek to {}", seek_pos);
+        g_seek_pos_ms = seek_pos;
+        mState = PlayerState::Playing;
         emit StateChanged(mState);
-        mState = PlayerState::Paused;
+        return;
     }
+    spdlog::error(" player is not playing or paused");
 }
 
 
@@ -421,8 +487,7 @@ std::pair<int64_t, int64_t> PlayerController::CurrentPosition() const {
     using namespace std::chrono;
 
     int64_t current_ms = duration_cast<milliseconds>(
-        (system_clock::now() - g_pause_time.load() - g_start_time).
-        time_since_epoch()
+        (system_clock::now() - g_pause_time.load() - g_start_time)
         ).count();
 
     int64_t total_ms = g_total_video_time.count();

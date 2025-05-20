@@ -21,13 +21,12 @@ enum class PlayerState {
     Playing,
     Paused,
     Seeking,
+    Speeding,
     Error,
 };
 
 class PlayerController : public QObject {
     Q_OBJECT
-
-
 
 public:
     explicit PlayerController(const class PlayerWidget *rendererBridge);
@@ -35,6 +34,7 @@ public:
     void Open(const std::string &url); // 支持本地/网络
     void Play();
     void Close();
+    void Speed(bool checked) const;
     void SeekTo(int64_t seek_pos);
     std::pair<int64_t, int64_t> CurrentPosition() const;
 

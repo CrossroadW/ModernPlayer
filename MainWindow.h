@@ -4,10 +4,13 @@
 class RendererBridge;
 class PlayerController;
 class PlayerWidget;
+class QSlider;
+class QListView;
+class QPushButton;
+class QTimer;
 
-class MainWindow final: public QMainWindow {
+class MainWindow final : public QMainWindow {
     Q_OBJECT
-
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
@@ -24,6 +27,7 @@ private:
     QTimer *mProgressTimer{};
     int64_t mCurrentPos;
     int64_t mTotalPos;
-    struct QSlider* mProgressBar;
-    struct QListView* mListView;
+    QSlider *mProgressBar;
+    QListView *mListView;
+    QPushButton *mPlayButton;
 };
