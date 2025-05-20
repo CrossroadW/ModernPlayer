@@ -98,7 +98,7 @@ void PlayerWidget::paintEvent(QPaintEvent *event) {
         mImpl->g_stride,
         QImage::Format_ARGB32
         ).scaled(dstRect.size(), Qt::KeepAspectRatioByExpanding,
-                 Qt::FastTransformation);
+                 Qt::SmoothTransformation);
 
     painter.drawImage(dstRect, rgbImage);
 }

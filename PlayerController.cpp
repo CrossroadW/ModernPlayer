@@ -13,8 +13,8 @@ namespace {
 AVFormatContext *g_format_context;
 AVCodecContext *videoCodecContext;
 AVCodecContext *audioCodecContext;
-int videoStream;
-int audioStream;
+int g_videoStream;
+int g_audioStream;
 std::chrono::time_point<std::chrono::system_clock> g_start_time;
 std::chrono::milliseconds g_total_video_time;
 
@@ -25,7 +25,8 @@ std::atomic<std::chrono::milliseconds> g_pause_time;
 std::atomic_bool g_is_paused = false;
 std::atomic_bool g_is_seeking = false;
 std::atomic_int g_seek_pos_ms = 0;
-std::atomic_bool g_is_speeding = false;
+int64_t g_audio_pts_begin;
+int64_t g_video_pts_begin;
 
 boost::lockfree::spsc_queue<AVPacket *, boost::lockfree::capacity<128>>
 g_buffer_video;
@@ -38,11 +39,11 @@ g_last_pause_point;
 
 
 void doSeek(int64_t seek_pos_ms) {
-    AVStream *audio_stream = g_format_context->streams[audioStream];
+    AVStream *audio_stream = g_format_context->streams[g_audioStream];
     double time_base = av_q2d(audio_stream->time_base) * 1000;
     int64_t target_pts = seek_pos_ms / time_base;
     int seek_flags = AVSEEK_FLAG_FRAME;
-    if (av_seek_frame(g_format_context, audioStream, target_pts, seek_flags) <
+    if (av_seek_frame(g_format_context, g_audioStream, target_pts, seek_flags) <
         0) {
         spdlog::error(PREFIX ".doSeek seek failed");
     }
@@ -57,6 +58,7 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
 
                 return;
             }
+
             spdlog::error("readPaket error");
             std::this_thread::sleep_for(std::chrono::microseconds(1));
             continue;
@@ -66,12 +68,12 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
             break;
         }
         if (packet->stream_index !=
-            audioStream && packet->stream_index != videoStream) {
+            g_audioStream && packet->stream_index != g_videoStream) {
             spdlog::info("skip packet");
             continue;
         }
-        bool isVideo = packet->stream_index == videoStream;
-        bool isAudio = packet->stream_index == audioStream;
+        bool isVideo = packet->stream_index == g_videoStream;
+        bool isAudio = packet->stream_index == g_audioStream;
         // spdlog::info("push packet");
 
         while (true) {
@@ -135,14 +137,14 @@ uint64_t calDuration() {
     static int lastVideoStream = -1;
     static double cachedFrameIntervalMs = 0.0;
 
-    if (g_format_context == nullptr || videoStream < 0) {
+    if (g_format_context == nullptr || g_videoStream < 0) {
         return 0;
     }
 
     // 如果格式或视频流编号变化，重新计算
-    if (g_format_context != lastFormatContext || videoStream !=
+    if (g_format_context != lastFormatContext || g_videoStream !=
         lastVideoStream) {
-        AVStream *stream = g_format_context->streams[videoStream];
+        AVStream *stream = g_format_context->streams[g_videoStream];
         AVRational avgRate = stream->avg_frame_rate;
 
         if (avgRate.num != 0 && avgRate.den != 0) {
@@ -153,7 +155,7 @@ uint64_t calDuration() {
 
         // 更新缓存状态
         lastFormatContext = g_format_context;
-        lastVideoStream = videoStream;
+        lastVideoStream = g_videoStream;
     }
 
     return cachedFrameIntervalMs;
@@ -189,7 +191,7 @@ void startVideoDecode2(std::stop_token token, PlayerController *controller) {
 
             uint64_t currentPosMillis = av_q2d(
                                             g_format_context->streams[
-                                                videoStream]->
+                                                g_videoStream]->
                                             time_base)
                                         * pts * 1000;
 
@@ -201,7 +203,8 @@ void startVideoDecode2(std::stop_token token, PlayerController *controller) {
             //         old_val, old_val - duration)) {}
             // }
             auto deadline = g_start_time + milliseconds(
-                                currentPosMillis);
+                                currentPosMillis) - milliseconds(
+                                g_video_pts_begin);
             spdlog::warn("begin waiting && waiting");
             while (!g_is_seeking && (
                        system_clock::now() - g_pause_time.
@@ -264,14 +267,15 @@ void startAudioDecode(std::stop_token token, PlayerController *controller) {
 
             uint64_t currentPosMillis = av_q2d(
                                             g_format_context->streams[
-                                                audioStream]->
+                                                g_audioStream]->
                                             time_base)
                                         * pts * 1000;
 
             using namespace std::chrono;
 
             auto deadline = g_start_time + milliseconds(
-                                currentPosMillis);
+                                currentPosMillis) - milliseconds(
+                                g_audio_pts_begin);
 
             while (!g_is_seeking &&
                    (system_clock::now() - g_pause_time.load())
@@ -325,19 +329,24 @@ void PlayerController::Open(const std::string &url) {
         mState = PlayerState::Ready;
         mUrl = url;
         spdlog::info(PREFIX "open url:{}", url);
-        FFmpeg::openFile(g_format_context, url, audioStream, videoStream);
-        FFmpeg::openCodec(videoCodecContext, videoStream, g_format_context);
-        FFmpeg::openCodec(audioCodecContext, audioStream, g_format_context);
+        FFmpeg::openFile(g_format_context, url, g_audioStream, g_videoStream);
+        FFmpeg::openCodec(videoCodecContext, g_videoStream, g_format_context);
+        FFmpeg::openCodec(audioCodecContext, g_audioStream, g_format_context);
         spdlog::warn(PREFIX "coded_width: {}",
                      videoCodecContext->coded_width);
 
-        AVStream *stream = g_format_context->streams[videoStream];
+        AVStream *stream = g_format_context->streams[g_videoStream];
         AVRational pts_base = stream->time_base;
         int64_t video_ms = stream->duration * av_q2d(pts_base) * 1000;
         g_total_video_time = std::chrono::milliseconds(video_ms);
         spdlog::info(PREFIX "file total len: {}.{}s", video_ms / 1000 / 60,
                      video_ms / 1000 % 60);
-        g_audio_pts_base = g_format_context->streams[audioStream]->time_base;
+        g_audio_pts_begin = g_format_context->streams[g_audioStream]->
+            start_time;
+        g_video_pts_begin = g_format_context->streams[g_videoStream]->
+            start_time;
+        spdlog::info(PREFIX "audio pts begin:{}", g_audio_pts_begin);
+        spdlog::info(PREFIX "video pts begin:{}", g_video_pts_begin);
         emit StateChanged(mState);
     } else {
         spdlog::warn(PREFIX "player is not idle");
@@ -428,7 +437,8 @@ void PlayerController::Close() {
         g_seek_pos_ms = 0;
         g_start_time = std::chrono::time_point<std::chrono::system_clock>();
         g_last_pause_point = std::chrono::system_clock::now();
-
+        g_video_pts_begin = 0;
+        g_audio_pts_begin = 0;
         emit StateChanged(mState);
     } else {
         spdlog::warn(

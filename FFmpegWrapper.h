@@ -10,9 +10,11 @@ extern "C" {
 #include <libswresample/swresample.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 }
 
-#include <functional>
 #include <source_location>
 #include <spdlog/spdlog.h>
 #include <vector>
@@ -442,15 +444,59 @@ public:
 #endif
     };
 
+    static AVFrame* applyAtempoFilter(AVFrame *inputFrame, AVCodecContext *ctx, float speed) {
+        char args[512];
+        AVFilterGraph *filterGraph = avfilter_graph_alloc();
+        AVFilterContext *abufferCtx = nullptr, *atempoCtx = nullptr, *abuffersinkCtx = nullptr;
 
+        // abuffer
+        snprintf(args, sizeof(args),
+                 "time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%" PRIx64,
+                 ctx->sample_rate,
+                 ctx->sample_rate,
+                 av_get_sample_fmt_name(ctx->sample_fmt),
+                 ctx->channel_layout);
+
+        const AVFilter *abuffer = avfilter_get_by_name("abuffer");
+        avfilter_graph_create_filter(&abufferCtx, abuffer, "in", args, nullptr, filterGraph);
+
+        // atempo（注意速度范围，如果 speed 不在 0.5~2.0 内需链多个 atempo）
+        char atempoArgs[64];
+        snprintf(atempoArgs, sizeof(atempoArgs), "atempo=%f", speed);
+        const AVFilter *atempo = avfilter_get_by_name("atempo");
+        avfilter_graph_create_filter(&atempoCtx, atempo, "atempo", atempoArgs, nullptr, filterGraph);
+
+        // abuffersink
+        const AVFilter *abuffersink = avfilter_get_by_name("abuffersink");
+        avfilter_graph_create_filter(&abuffersinkCtx, abuffersink, "out", nullptr, nullptr, filterGraph);
+
+        // 连接
+        avfilter_link(abufferCtx, 0, atempoCtx, 0);
+        avfilter_link(atempoCtx, 0, abuffersinkCtx, 0);
+        avfilter_graph_config(filterGraph, nullptr);
+
+        // 输入帧送入滤镜图
+        av_buffersrc_add_frame(abufferCtx, inputFrame);
+
+        // 从滤镜图拉取输出帧
+        AVFrame *outFrame = av_frame_alloc();
+        if (av_buffersink_get_frame(abuffersinkCtx, outFrame) < 0) {
+            av_frame_free(&outFrame);
+            outFrame = nullptr;
+        }
+
+        // 清理
+        avfilter_graph_free(&filterGraph);
+
+        return outFrame; // 返回新的 AVFrame
+    }
     static HasError decodeAudio(SwrResample *&swrResample, AVFrame *frame,
                                 AVCodecContext *audioCodecCtx, int speed = 1.0
         ) {
         static int oldSpeed = -1;
-        if (!swrResample || oldSpeed != speed) {
-            if (swrResample) {
-                delete swrResample;
-            }
+        // frame = applyAtempoFilter(frame, audioCodecCtx, speed);
+        if (!swrResample) {
+
             swrResample = new SwrResample{};
 
             int src_ch_layout = audioCodecCtx->channel_layout;
@@ -458,8 +504,7 @@ public:
             AVSampleFormat src_sample_fmt = audioCodecCtx->sample_fmt;
 
             int dst_ch_layout = AV_CH_LAYOUT_STEREO;
-            int dst_rate = static_cast<int>(44100 * speed);
-            // int dst_rate = 44100;
+            int dst_rate = 48000;
             AVSampleFormat dst_sample_fmt = AV_SAMPLE_FMT_S16;
 
             int src_nb_samples = frame->nb_samples;
