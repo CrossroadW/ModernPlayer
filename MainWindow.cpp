@@ -50,8 +50,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     widget->setStyleSheet(qss.readAll());
     setCentralWidget(widget);
     auto layout = new QVBoxLayout(widget);
+#ifdef useglwidget
+    mRender =new  OpenglPlayWidget{};
+#else
     mRender = new PlayerWidget{};
-
+#endif
     {
         // 创建 QListView 和 Model
         mListView = new QListView{};
@@ -145,7 +148,31 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                 model->appendRow(item);
             }
         });
+        {
+            //dirpath is video path
+            auto dirPath = QStandardPaths::standardLocations(
+                QStandardPaths::MoviesLocation
+                );
+            QDir dir(dirPath[0]);
+            QStringList videoFilters = {"*.mp4", "*.mkv", "*.avi", "*.mov",
+                                        "*.flv"};
+            QFileInfoList fileList = dir.entryInfoList(
+                videoFilters, QDir::Files);
 
+            auto model = qobject_cast<QStandardItemModel *>(mListView->model());
+            if (!model)
+                return;
+
+            model->clear(); // 清空旧列表
+
+            for (const QFileInfo &fileInfo: fileList) {
+                QStandardItem *item = new QStandardItem(fileInfo.fileName());
+                item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+                item->setData(fileInfo.absoluteFilePath(), Qt::UserRole);
+                // 储存完整路径
+                model->appendRow(item);
+            }
+        }
         connect(mListView, &QListView::clicked, this,
                 [=](const QModelIndex &index) {
                     auto model = qobject_cast<QStandardItemModel *>(
@@ -289,8 +316,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto onOpen = file->addAction("打开文件");
     connect(onOpen, &QAction::triggered, this, [this, onStateChanged] {
         spdlog::info("open file");
+        //default path is Video path
+        auto path = QStandardPaths::standardLocations(
+            QStandardPaths::StandardLocation::MoviesLocation
+            );
         auto filePath = QFileDialog::getOpenFileName(this, "Open File",
-            "",
+            path[0],
             "Video Files (*.mp4)");
         try {
             if (mController->state() != PlayerState::Idle) {

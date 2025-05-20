@@ -12,6 +12,14 @@
             </PerProfileState>
           </value>
         </entry>
+        <entry key="Release-clang">
+          <value>
+            <PerProfileState>
+              <option name="myQmlPath" value="/usr/lib64/qt5/qml" />
+              <option name="myQtBinPath" value="/usr/lib64/qt5/bin" />
+            </PerProfileState>
+          </value>
+        </entry>
       </map>
     </option>
   </component>

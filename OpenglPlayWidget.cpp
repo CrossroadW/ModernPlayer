@@ -7,12 +7,12 @@ extern "C" {
 }
 
 
-
 struct OpenglPlayWidget::Impl {
     std::vector<uint8_t> g_rgbaData;
     int g_width = 0;
     int g_height = 0;
     int g_stride = 0;
+    unsigned int textureId = 0;
 
     QRect
     static scaleKeepAspectRatio(const QRect &outer, int inner_w, int inner_h) {
@@ -39,7 +39,9 @@ struct OpenglPlayWidget::Impl {
         };
     }
 };
-OpenglPlayWidget::OpenglPlayWidget(QWidget *parent): QOpenGLWidget(parent) { setStyleSheet("QWidget{border: 1px solid black; background-color: black;}");}
+
+OpenglPlayWidget::OpenglPlayWidget(QWidget *parent): QOpenGLWidget(parent),
+    mImpl(new Impl{}) {}
 
 QSize OpenglPlayWidget::sizeHint() const {
     return QOpenGLWidget::sizeHint();
@@ -48,13 +50,54 @@ QSize OpenglPlayWidget::sizeHint() const {
 void OpenglPlayWidget::initializeGL() {
     initializeOpenGLFunctions();
     glEnable(GL_TEXTURE_2D);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    // 设置清除颜色为黑色
+    // 创建纹理
+    glGenTextures(1, &mImpl->textureId);
+    glBindTexture(GL_TEXTURE_2D, mImpl->textureId);
+
+    // 设置纹理参数
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // 线性滤波
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); // 线性放大
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // 解绑纹理
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void OpenglPlayWidget::resizeGL(int w, int h) {
     glViewport(0, 0, w, h);
 }
 
-void OpenglPlayWidget::paintGL() {}
+void OpenglPlayWidget::paintGL() {
+    if (mImpl->g_rgbaData.empty())
+        return;
+
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindTexture(GL_TEXTURE_2D, mImpl->textureId);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA,
+                 mImpl->g_width, mImpl->g_height,
+                 0, GL_BGRA, GL_UNSIGNED_BYTE,
+                 mImpl->g_rgbaData.data());
+
+    // 设置纹理参数（仅需一次，建议放 initializeGL 中）
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // 直接绘制纹理四边形
+    glEnable(GL_TEXTURE_2D);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -1.0f); // 左下
+    glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, -1.0f);  // 右下
+    glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, 1.0f);   // 右上
+    glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, 1.0f);  // 左上
+    glEnd();
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
 
 void OpenglPlayWidget::onFrameChanged(VideoFrame frame) {
     const uint8_t *src_y = frame->data[0];

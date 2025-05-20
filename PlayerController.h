@@ -6,7 +6,7 @@
 #include <qobject.h>
 #include <future>
 #include <thread>
-
+#include "OpenglPlayWidget.h"
 extern "C" {
 #include <libavutil/frame.h>
 }
@@ -24,12 +24,14 @@ enum class PlayerState {
     Speeding,
     Error,
 };
-
+class PlayerWidget;
+class OpenglPlayWidget;
 class PlayerController : public QObject {
     Q_OBJECT
 
 public:
-    explicit PlayerController(const class PlayerWidget *rendererBridge);
+    explicit PlayerController(const  PlayerWidget *rendererBridge);
+    explicit PlayerController(const  OpenglPlayWidget *rendererBridge);
     ~PlayerController() override;
     void Open(const std::string &url); // 支持本地/网络
     void Play();

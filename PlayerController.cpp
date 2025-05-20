@@ -89,7 +89,7 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
                 g_buffer_audio.consume_all([](auto) {});
 
                 using namespace std::chrono;
-
+#if 1
                 int64_t current_ms = duration_cast<milliseconds>(
                     (system_clock::now() - g_pause_time.load() - g_start_time)
 
@@ -114,6 +114,25 @@ void startReadPacket(std::stop_token token, PlayerController *controller) {
                 milliseconds current = g_pause_time.load();
                 while (!g_pause_time.
                     compare_exchange_weak(current, current + delta)) {}
+#else
+                int64_t current_ms = duration_cast<milliseconds>(
+                    (system_clock::now() - g_pause_time.load() - g_start_time)
+                    ).count();
+
+                doSeek(g_seek_pos_ms);
+
+                auto now = system_clock::now();
+                auto delta = std::chrono::duration_cast<
+                    std::chrono::milliseconds>(
+                    now - g_last_pause_point.load());
+                spdlog::info("seekoffset :{}", g_seek_pos_ms - current_ms);
+                g_pause_time = -std::chrono::milliseconds(
+                                   g_seek_pos_ms - current_ms) + g_pause_time.
+                               load();
+                std::chrono::milliseconds current = g_pause_time.load();
+                while (!g_pause_time.
+                   compare_exchange_weak(current, current + delta)) {}
+#endif
                 g_is_paused = false;
                 g_is_seeking = false;
                 g_cv_pause.notify_all();
@@ -160,6 +179,50 @@ uint64_t calDuration() {
     }
 
     return cachedFrameIntervalMs;
+}
+
+uint64_t calAudioFrameDurationMs() {
+    static const AVFormatContext *lastFormatContext = nullptr;
+    static int lastAudioStream = -1;
+    static double cachedAudioFrameDurationMs = 0.0;
+
+    if (!g_format_context || g_audioStream < 0)
+        return 0;
+
+    // 若音频流或上下文变化，重新计算
+    if (g_format_context != lastFormatContext || g_audioStream !=
+        lastAudioStream) {
+        AVStream *stream = g_format_context->streams[g_audioStream];
+        AVCodecParameters *codecpar = stream->codecpar;
+
+        if (!codecpar || codecpar->sample_rate == 0) {
+            cachedAudioFrameDurationMs = 0;
+        } else {
+            AVRational tb = stream->time_base;
+
+            // 默认每帧 duration
+            int64_t frame_duration = stream->codecpar->frame_size;
+            if (frame_duration > 0) {
+                cachedAudioFrameDurationMs =
+                    (double)frame_duration * 1000.0 / codecpar->sample_rate;
+            } else {
+                // 回退用 time_base
+                if (stream->duration > 0 && stream->nb_frames > 0) {
+                    double avg_duration =
+                        (double)stream->duration / stream->nb_frames;
+                    cachedAudioFrameDurationMs =
+                        av_q2d(tb) * avg_duration * 1000.0;
+                } else {
+                    cachedAudioFrameDurationMs = 0;
+                }
+            }
+        }
+
+        lastFormatContext = g_format_context;
+        lastAudioStream = g_audioStream;
+    }
+
+    return (uint64_t)cachedAudioFrameDurationMs;
 }
 
 void startVideoDecode2(std::stop_token token, PlayerController *controller) {
@@ -319,6 +382,15 @@ PlayerController::PlayerController(const PlayerWidget *rendererBridge) {
     connect(this, &PlayerController::VideoFrameReady,
             rendererBridge,
             qOverload<VideoFrame>(&PlayerWidget::onFrameChanged),
+            Qt::DirectConnection);
+}
+
+PlayerController::PlayerController(const OpenglPlayWidget *rendererBridge) {
+    qRegisterMetaType<PlayerState>("PlayerState");
+    qRegisterMetaType<VideoFrame>("VideoFrame");
+    connect(this, &PlayerController::VideoFrameReady,
+            rendererBridge,
+            qOverload<VideoFrame>(&OpenglPlayWidget::onFrameChanged),
             Qt::DirectConnection);
 }
 

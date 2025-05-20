@@ -8,7 +8,8 @@ class QSlider;
 class QListView;
 class QPushButton;
 class QTimer;
-
+class OpenglPlayWidget;
+// #define useglwidget
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
@@ -22,7 +23,11 @@ public Q_SLOTS:
     void OnSliderValueReleased() const;
 
 private:
+#ifdef useglwidget
+    OpenglPlayWidget *mRender{};
+#else
     PlayerWidget *mRender{};
+#endif
     PlayerController *mController{};
     QTimer *mProgressTimer{};
     int64_t mCurrentPos;
