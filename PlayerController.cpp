@@ -24,6 +24,7 @@ std::atomic<std::chrono::milliseconds> g_pause_time;
 
 std::atomic_bool g_is_paused = false;
 std::atomic_bool g_is_seeking = false;
+std::atomic_bool g_is_speeding = false;
 std::atomic_int g_seek_pos_ms = 0;
 int64_t g_audio_pts_begin;
 int64_t g_video_pts_begin;
@@ -284,7 +285,8 @@ void startAudioDecode(std::stop_token token, PlayerController *controller) {
                 std::this_thread::sleep_for(1ms); // 精细等待
             }
 
-            if (FFmpeg::decodeAudio(g_swr, frame, audioCodecContext).
+            if (FFmpeg::decodeAudio(g_swr, frame, audioCodecContext,
+                                    g_is_speeding ? 2.0 : 1.0).
                 hasErr()) {
                 spdlog::error("decodeAudio error");
 
@@ -449,18 +451,18 @@ void PlayerController::Close() {
 
 void PlayerController::Speed(bool checked) const {
     spdlog::warn(PREFIX "speed not implemented");
-    // if (mState != PlayerState::Playing) {
-    //     spdlog::warn(PREFIX "player is not playing");
-    //     return;
-    // }
-    // if (checked) {
-    //     spdlog::info(PREFIX "speed up");
-    //     g_is_speeding = true;
-    //     g_cv_pause.notify_all();
-    // } else {
-    //     g_is_speeding = false;
-    //     g_cv_pause.notify_all();
-    // }
+    if (mState != PlayerState::Playing) {
+        spdlog::warn(PREFIX "player is not playing");
+        return;
+    }
+    if (checked) {
+        spdlog::info(PREFIX "speed up");
+        g_is_speeding = true;
+        g_cv_pause.notify_all();
+    } else {
+        g_is_speeding = false;
+        g_cv_pause.notify_all();
+    }
 }
 
 void PlayerController::SeekTo(int64_t seek_pos) {

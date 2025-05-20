@@ -181,10 +181,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     after->setObjectName("afterBtn");
     auto closeBnt = new QPushButton{};
     closeBnt->setObjectName("closeBtn");
-    // auto speedBtn = new QPushButton{"2x"};
-    // speedBtn->setObjectName("speedBtn");
-    // speedBtn->setCheckable(true);
-    // speedBtn->setToolTip("切换 2 倍速");
+    auto speedBtn = new QPushButton{"2x"};
+    speedBtn->setObjectName("speedBtn");
+    speedBtn->setCheckable(true);
+    speedBtn->setToolTip("切换 2 倍速");
 
     mProgressBar = new QSlider{Qt::Horizontal};
     mProgressBar->setRange(0, 1000);
@@ -192,17 +192,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     buttom->addWidget(before);
     buttom->addWidget(mPlayButton);
     buttom->addWidget(after);
-    // buttom->addWidget(speedBtn);
+    buttom->addWidget(speedBtn);
     buttom->addWidget(mProgressBar);
     buttom->addWidget(closeBnt);
     layout->addLayout(buttom);
-    // connect(speedBtn, &QPushButton::clicked, this, [this](bool checked) {
-    //     if (!mController) {
-    //         spdlog::warn("mController is null");
-    //         return;
-    //     }
-    //     mController->Speed(checked);
-    // });
+    connect(speedBtn, &QPushButton::clicked, this, [this](bool checked) {
+        if (!mController) {
+            spdlog::warn("mController is null");
+            return;
+        }
+        mController->Speed(checked);
+    });
     connect(closeBnt, &QPushButton::clicked, this, [this] {
         spdlog::info("close");
         if (!mController || mController->state() == PlayerState::Idle) {
